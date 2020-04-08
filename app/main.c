@@ -9,24 +9,23 @@ int main(int argc, char *argv[]) {
 
 	printf("Your code goes here!\n");
 
-	// Uncomment this block to pass the first stage
-	// 
-	// char *command = argv[3];
-	// int child_pid = fork();
-	// if (child_pid == -1) {
-	//     printf("Error forking!");
-	//     return 1;
-	// }
-	//
-	// if (child_pid == 0) {
-	// 	   // Replace current program with calling program
-	//     execv(command, &argv[3]);
-	// } else {
-	// 	   // We're in parent
-	// 	   int status;
-	// 	   waitpid(child_pid, &status, 0);
-	// 	   printf("Child terminated with status %d", status);
-	// }
+	 
+	char *command = argv[3];
+	int child_pid = fork();
+	if (child_pid == -1) {
+	     printf("Error forking!");
+	     return 1;
+	}
+	
+	if (child_pid == 0) {
+	 	   // Replace current program with calling program
+	     execv(command, &argv[3]);
+	 } else {
+	 	   // We're in parent
+	 	   int status;
+	 	   waitpid(child_pid, &status, 0);
+	 	   printf("Child terminated with status %d", status);
+	 }
 
 	return 0;
 }
