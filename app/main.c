@@ -23,7 +23,7 @@ int main(int argc, char *argv[]) {
 	 	   // We're in parent
 	 	   int status;
 	 	   waitpid(child_pid, &status, 0);
-	 	   printf("Child terminated with status %d", WEXITSTATUS(stauts));
+	 	   printf("Child terminated with status %d", WEXITSTATUS(status));
 	 }
 
 	return 0;
