@@ -15,8 +15,7 @@ int main(int argc, char *argv[]) {
 	if (child_pid == -1) {
 	     printf("Error forking!");
 	     return 1;
-	}
-	
+	}	
 	if (child_pid == 0) {
 	 	   // Replace current program with calling program
 	     execv(command, &argv[3]);
