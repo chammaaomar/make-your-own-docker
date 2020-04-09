@@ -49,10 +49,8 @@ int main(int argc, char *argv[]) {
 		child_out[out_sz] = '\0';
 		child_err[err_sz] = '\0';
 
-		fprintf(stdout, "%s\n", child_out);
-		fprintf(stderr, "%s\n", child_err);
-		
-		printf("Child terminated with status %d\n", WEXITSTATUS(status));
+		fprintf(stdout, "%s", child_out);
+		fprintf(stderr, "%s", child_err);
 	 }
 
 	return 0;
