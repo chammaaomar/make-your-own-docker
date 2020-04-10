@@ -7,6 +7,8 @@
 #include <stdlib.h>
 #include <fcntl.h>
 
+char* DOCKER_IMG = "/usr/local/bin/docker-explorer";
+
 void error(char* msg) {
 	fprintf(stderr, "%s: %s\n", msg, strerror(errno));
 	exit(1);
@@ -16,13 +18,15 @@ void setup_run_child(int* setup_args, char* exec_args[]) {
 		// TODO: Make variadic
 		int fd_outpipe = setup_args[0];
 		int fd_errpipe = setup_args[1];
-		char* command = exec_args[0];
+		char* command = exec_args[0] = "/docker-explorer";
 		
 		// open write pipes to talk to parent
 		dup2(fd_outpipe, fileno(stdout));
 		dup2(fd_errpipe, fileno(stderr));
-		
-		execvp(command, exec_args);
+
+		if (execv(command, exec_args)) {
+			error("Error executing command");
+		}
 }
 
 void setup_run_parent(int* setup_args) {
@@ -34,20 +38,19 @@ void setup_run_parent(int* setup_args) {
 		int fd_outpipe = setup_args[0];
 		int fd_errpipe = setup_args[1];
 
+		pid_t child_pid = (pid_t) setup_args[2];
+
 		// non-blocking IO
 		fcntl(fd_outpipe, F_SETFL, O_NONBLOCK);
 		fcntl(fd_errpipe, F_SETFL, O_NONBLOCK);
 
-		pid_t child_pid = (pid_t) setup_args[2];
-		
 		waitpid(child_pid, &status, 0);
-		
+
 		size_t out_sz = read(fd_outpipe, child_out, 1024);
 		size_t err_sz = read(fd_errpipe, child_err, 1024);
-		
 
 		child_out[out_sz] = '\0';
-		child_err[0] = '\0';
+		child_err[err_sz] = '\0';
 
 		fprintf(stdout, "%s", child_out);
 		fprintf(stderr, "%s", child_err);
@@ -55,19 +58,40 @@ void setup_run_parent(int* setup_args) {
 		exit(WEXITSTATUS(status));
 }
 
+void chroot_into_tmp(const char * tmp_dir) {
+	
+	if (mkdir(tmp_dir, S_IRWXO) == -1) {
+		error("Error creating a tmp dir");
+	}
+
+	pid_t cp_pid = fork();
+
+	if (cp_pid == -1) {
+		error("Error forking to copy executable");
+	}
+
+	if (!cp_pid) {
+		// copy process; this will exit upon success or failure
+		if (execlp("cp", "cp", DOCKER_IMG, tmp_dir, NULL) == -1) {
+			error("Error copying executable into chroot cage");
+		}
+	}
+
+	int status;
+	waitpid(cp_pid, &status, 0);
+
+	if (chroot(tmp_dir) == -1) {
+		error("Error chrooting into tmp dir");
+	}
+}
+
 // Usage: your_docker.sh run <image> <command> <arg1> <arg2> ...
 int main(int argc, char *argv[]) {
 	// Disable output buffering
 	setbuf(stdout, NULL);
 
-	// if(mkdir("tmp-docker", S_IRWXU) == -1) {
-	// 	error("Error creating a tmp dir");
-	// }
+	chroot_into_tmp("tmp-cage/");
 
-	// if(chroot("tmp-docker") == -1) {
-	// 	error("Error chrooting into tmp dir");
-	// }
-	 
 	int fd_outpipe[2];
 	int fd_errpipe[2];
 
@@ -88,11 +112,13 @@ int main(int argc, char *argv[]) {
 	}
 
 	if (!child_pid) {
-	 	// Replace current program with calling program
-		setup_run_child(child_setup_args, argv + 1);
-	} else {
-		// We're in parent
-		parent_setup_args[2] = (int) child_pid;
-		setup_run_parent(parent_setup_args);
-	 }
+		// Replace current program with calling program
+		// this always exits; success or failure
+		setup_run_child(child_setup_args, argv + 3);
+	}
+
+	// We're in parent
+	parent_setup_args[2] = (int) child_pid;
+	setup_run_parent(parent_setup_args);
+	
 }
