@@ -60,9 +60,7 @@ void setup_run_parent(int* setup_args) {
 
 void chroot_into_tmp(const char * tmp_dir) {
 	
-	if (mkdir(tmp_dir, S_IRWXO) == -1) {
-		error("Error creating a tmp dir");
-	}
+	if (mkdir(tmp_dir, S_IRWXO) == -1) {;}
 
 	pid_t cp_pid = fork();
 
