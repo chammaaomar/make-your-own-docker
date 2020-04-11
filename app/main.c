@@ -14,53 +14,59 @@ void error(char* msg) {
 	exit(1);
 }
 
-void setup_run_child(int* setup_args, char* exec_args[]) {
-		// TODO: Make variadic
-		int fd_outpipe = setup_args[0];
-		int fd_errpipe = setup_args[1];
-		char* command = exec_args[0] = "/docker-explorer";
-		
-		// open write pipes to talk to parent
-		dup2(fd_outpipe, fileno(stdout));
-		dup2(fd_errpipe, fileno(stderr));
+int setup_run_child(int* setup_args, char* exec_args[]) {
+	// TODO: Make variadic
+	int fd_outpipe = setup_args[0];
+	int fd_errpipe = setup_args[1];
+	// only executing docker-explorer command for now
+	char* command = exec_args[0] = "/docker-explorer";
+	
+	// open write pipes to talk to parent
+	dup2(fd_outpipe, fileno(stdout));
+	dup2(fd_errpipe, fileno(stderr));
 
-		if (execv(command, exec_args)) {
-			error("Error executing command");
-		}
+	if (execv(command, exec_args)) {
+		error("Error executing command");
+	}
 }
 
 void setup_run_parent(int* setup_args) {
-		// TODO: Make variadic
-		int status;
-		char child_err[1024];
-		char child_out[1024];
+	// TODO: Make variadic
+	int status;
+	char child_err[1024];
+	char child_out[1024];
 
-		int fd_outpipe = setup_args[0];
-		int fd_errpipe = setup_args[1];
+	int fd_outpipe = setup_args[0];
+	int fd_errpipe = setup_args[1];
 
-		pid_t child_pid = (pid_t) setup_args[2];
+	pid_t child_pid = (pid_t) setup_args[2];
 
-		// non-blocking IO
-		fcntl(fd_outpipe, F_SETFL, O_NONBLOCK);
-		fcntl(fd_errpipe, F_SETFL, O_NONBLOCK);
+	// non-blocking IO
+	fcntl(fd_outpipe, F_SETFL, O_NONBLOCK);
+	fcntl(fd_errpipe, F_SETFL, O_NONBLOCK);
 
-		waitpid(child_pid, &status, 0);
+	waitpid(child_pid, &status, 0);
 
-		size_t out_sz = read(fd_outpipe, child_out, 1024);
-		size_t err_sz = read(fd_errpipe, child_err, 1024);
+	size_t out_sz = read(fd_outpipe, child_out, 1024);
+	size_t err_sz = read(fd_errpipe, child_err, 1024);
 
-		child_out[out_sz] = '\0';
-		child_err[err_sz] = '\0';
+	child_out[out_sz] = '\0';
+	child_err[err_sz] = '\0';
 
-		fprintf(stdout, "%s", child_out);
-		fprintf(stderr, "%s", child_err);
+	fprintf(stdout, "%s", child_out);
+	fprintf(stderr, "%s", child_err);
 
-		exit(WEXITSTATUS(status));
+	exit(WEXITSTATUS(status));
 }
 
 void chroot_into_tmp(const char * tmp_dir) {
 	
-	if (mkdir(tmp_dir, S_IRWXO) == -1) {;}
+	if (mkdir(tmp_dir, S_IRWXO) == -1) {
+		if (errno != EEXIST) {
+			// it's ok if file already exists
+			error("Error creating a tmp dir");
+		}
+	}
 
 	pid_t cp_pid = fork();
 
@@ -104,6 +110,7 @@ int main(int argc, char *argv[]) {
 	int parent_setup_args[] = {fd_outpipe[0], fd_errpipe[0], 0};
 
 	pid_t child_pid = fork();
+
 	
 	if (child_pid == -1) {
 		error("Error forking");
