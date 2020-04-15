@@ -10,6 +10,7 @@
 #define _GNU_SOURCE
 #include <sched.h>
 #include <sys/mman.h>
+#include <sys/types.h>
 
 #define STACK_SIZE (1024 * 1024)
 #define BUFFER_SIZE 1024
@@ -45,23 +46,14 @@ int setup_run_child(void* setup_args) {
 	dup2(fd_outpipe, fileno(stdout));
 	dup2(fd_errpipe, fileno(stderr));
 
-	pid_t exec_pid = fork();
-
-	if (!exec_pid) {
-		if (execv(command, exec_args) == -1) {
-			free(setup_args);
-			error("Error executing command");
-		}
-	}
-	else {
-		int status;
-		waitpid(exec_pid, &status, 0);
-		return WEXITSTATUS(status);
+	if (execv(command, exec_args) == -1) {
+		free(setup_args);
+		error("Error executing command");
 	}
 
 }
 
-void setup_run_parent(int* setup_args) {
+int setup_run_parent(int* setup_args) {
 	// TODO: Make variadic
 	int status;
 	char child_err[BUFFER_SIZE] = {'\0'};
@@ -76,7 +68,7 @@ void setup_run_parent(int* setup_args) {
 	fcntl(fd_outpipe, F_SETFL, O_NONBLOCK);
 	fcntl(fd_errpipe, F_SETFL, O_NONBLOCK);
 
-	waitpid(child_pid, &status, (CHILD_SIG != SIGCHLD) ? __WCLONE : 0);
+	waitpid(child_pid, &status, __WALL | WUNTRACED);
 
 	size_t out_sz = read(fd_outpipe, child_out, BUFFER_SIZE - 1);
 	size_t err_sz = read(fd_errpipe, child_err, BUFFER_SIZE - 1);
@@ -84,7 +76,7 @@ void setup_run_parent(int* setup_args) {
 	fprintf(stdout, "%s", child_out);
 	fprintf(stderr, "%s", child_err);
 
-	exit(WEXITSTATUS(status));
+	return WEXITSTATUS(status);
 }
 
 void chroot_into_tmp(const char * tmp_dir) {
@@ -165,5 +157,8 @@ int main(int argc, char *argv[]) {
 
 	// We're in parent
 	parent_setup_args[2] = (int) child_pid;
-	setup_run_parent(parent_setup_args);
+	int exit_code = setup_run_parent(parent_setup_args);
+
+	free(child_args);
+	return exit_code;
 }
