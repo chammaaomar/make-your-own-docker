@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
+#include <signal.h>
 #include <unistd.h>
 #include <errno.h>
 #include <string.h>
@@ -44,13 +45,23 @@ int setup_run_child(void* setup_args) {
 	dup2(fd_outpipe, fileno(stdout));
 	dup2(fd_errpipe, fileno(stderr));
 
-	if (execv(command, exec_args)) {
-		free(setup_args);
-		error("Error executing command");
+	pid_t exec_pid = fork();
+
+	if (!exec_pid) {
+		if (execv(command, exec_args) == -1) {
+			free(setup_args);
+			error("Error executing command");
+		}
 	}
+	else {
+		int status;
+		waitpid(exec_pid, &status, 0);
+		return WEXITSTATUS(status);
+	}
+
 }
 
-int setup_run_parent(int* setup_args) {
+void setup_run_parent(int* setup_args) {
 	// TODO: Make variadic
 	int status;
 	char child_err[BUFFER_SIZE] = {'\0'};
@@ -73,7 +84,7 @@ int setup_run_parent(int* setup_args) {
 	fprintf(stdout, "%s", child_out);
 	fprintf(stderr, "%s", child_err);
 
-	return WEXITSTATUS(status);
+	exit(WEXITSTATUS(status));
 }
 
 void chroot_into_tmp(const char * tmp_dir) {
@@ -143,7 +154,7 @@ int main(int argc, char *argv[]) {
 
 	
 	if (child_pid == -1) {
-		error("Error forking");
+		error("Error cloning");
 	}
 
 	// if (!child_pid) {
@@ -154,9 +165,5 @@ int main(int argc, char *argv[]) {
 
 	// We're in parent
 	parent_setup_args[2] = (int) child_pid;
-	int exit_status = setup_run_parent(parent_setup_args);
-
-	free(child_args);
-
-	return exit_status;
+	setup_run_parent(parent_setup_args);
 }
