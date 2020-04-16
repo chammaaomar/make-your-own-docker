@@ -23,6 +23,11 @@ typedef struct Args {
 	pid_t child_pid;
 } Args;
 
+typedef struct BufferArray {
+	char* buffer;
+	int size;
+} BufferArray;
+
 char* DOCKER_IMG = "/usr/local/bin/docker-explorer";
 
 void error(char* msg) {
@@ -64,7 +69,7 @@ int setup_run_parent(void* args) {
 	fcntl(fd_outpipe, F_SETFL, O_NONBLOCK);
 	fcntl(fd_errpipe, F_SETFL, O_NONBLOCK);
 
-	waitpid(child_pid, &status, __WALL);
+	// waitpid(child_pid, &status, __WALL);
 
 	size_t out_sz = read(fd_outpipe, child_out, BUFFER_SIZE - 1);
 	size_t err_sz = read(fd_errpipe, child_err, BUFFER_SIZE - 1);
@@ -144,12 +149,93 @@ pid_t clone_child(int fn (void*), void* args) {
 	return child_pid;
 }
 
+size_t write_callback(void* data, size_t size, size_t nmemb, void* array_mem) {
+	// libcurl always calls the callback with size == 1;
+	size_t true_sz = size*nmemb;
+	BufferArray* buf_arr = (BufferArray*) array_mem;
+	memcpy(buf_arr->buffer + buf_arr->size, data, true_sz);
+	buf_arr->size += true_sz;
+	return true_sz;
+}
+
+char* extract_token(char* buffer, char* token_start_kw, char* token_end_kw) {
+	// returns NULL to signal failure
+	char* token_start = strstr(buffer, token_start_kw);
+	char* token_end = strstr(buffer, token_end_kw) ;
+	if (!token_start || !token_end) {
+		fprintf(stderr, "Error token invalid");
+		return NULL;
+	}
+	// the JSON response has "token": "$TOKEN", we skip the keywords and formatting
+	token_start += strlen(token_start_kw)+1;
+	// the access token ends with $TOKEN","access_token", so we move three steps
+	// back to get the end
+	token_end += -3;
+	size_t token_len = (size_t) (token_end - token_start);
+	if (token_len > 0) {
+		char* token = (char*) calloc(token_len + 2, sizeof(char));
+		memcpy(token, token_start, token_len + 1);
+		return token;
+	} else {
+		fprintf(stderr, "Error token invalid");
+		return NULL;
+	}
+
+}
+
+char* make_curl_req(char* url, size_t write_cb (void*, size_t, size_t, void*)) {
+	CURL* curl = curl_easy_init();
+	char* body_buffer = (char*) calloc(CURL_MAX_WRITE_SIZE, sizeof(char));
+	BufferArray buf_arr;
+	buf_arr.buffer = body_buffer;
+	buf_arr.size = 0;
+	if (curl) {
+		CURLcode res;
+		curl_easy_setopt(curl, CURLOPT_URL, url);
+		curl_easy_setopt(curl, CURLOPT_VERBOSE, 1);
+		curl_easy_setopt(curl, CURLOPT_PROTOCOLS, CURLPROTO_HTTPS);
+		curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_cb);
+		curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void*) &buf_arr);
+		res = curl_easy_perform(curl);
+		if (res != CURLE_OK) {
+			fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
+		}
+		curl_easy_cleanup(curl);
+	}
+	return body_buffer;
+}
+
+void pull_docker_image(char* img) {
+	char* auth_url = "https://auth.docker.io/token?service=registry.docker.io&scope=repository:library/ubuntu:pull";
+	char* auth_response = make_curl_req(auth_url, write_callback);
+
+	char* token = extract_token(auth_response,"\"token\":", "\"access_token\":");
+
+	if (!token) {
+		exit(1);
+	}
+
+	puts(token);
+
+	free(token);
+	
+
+}
+
 // Usage: your_docker.sh run <image> <command> <arg1> <arg2> ...
 int main(int argc, char *argv[]) {
 	// Disable output buffering
 	setbuf(stdout, NULL);
 
 	chroot_into_tmp("tmp-cage/");
+
+	char* docker_args[2] = {argv[1], argv[2]};
+
+	if (!strcmp(argv[1], "run")) {
+		pull_docker_image(argv[2]);
+	}
+
+	pull_docker_image("");
 
 	// We're in parent
 	Args* args = args_make(argv + 3);
