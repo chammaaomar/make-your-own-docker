@@ -99,16 +99,34 @@ void chroot_into_tmp(const char * tmp_dir) {
 	if (!cp_pid) {
 		// copy process; this will exit upon success or failure
 		if (execlp("cp", "cp", DOCKER_IMG, tmp_dir, NULL) == -1) {
-			error("Error copying executable into chroot cage");
+			error("Error copying docker-explorer bin into chroot cage");
 		}
 	}
 
-	int status;
-	waitpid(cp_pid, &status, 0);
+	int cp_status;
+	waitpid(cp_pid, &cp_status, 0);
+
+	pid_t mount_pid = fork();
+
+	system("mkdir -p tmp-cage/etc/ssl/certs");
+	system("cp /etc/ssl/certs/* tmp-cage/etc/ssl/certs/");
+
+	if (mount_pid == -1) {
+		error("Error forking to chroot");
+	}
+	if (!mount_pid) {
+		if (execlp("cp", "cp", "/etc/resolv.conf", "tmp-cage/etc/", NULL) == -1) {
+			error("Error mounting hostname resolution dir");
+		}
+	}
+
+	int mount_status;
+	waitpid(mount_pid, &mount_status, 0);
 
 	if (chroot(tmp_dir) == -1) {
 		error("Error chrooting into tmp dir");
 	}
+
 }
 
 Args* args_make(char* cmd_args[]) {
@@ -218,7 +236,7 @@ char* make_curl_req(char* url, size_t write_cb (void*, size_t, size_t, void*), s
 			curl_easy_setopt(curl, CURLOPT_HTTPHEADER, list);
 		}
 		curl_easy_setopt(curl, CURLOPT_URL, url);
-		curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
+		curl_easy_setopt(curl, CURLOPT_VERBOSE, 0L);
 		curl_easy_setopt(curl, CURLOPT_PROTOCOLS, CURLPROTO_HTTPS);
 		curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
 		if (!filename) {
@@ -295,16 +313,21 @@ void pull_docker_image(char* img) {
 	char* digest;
 	char* layer_url;
 	char* digest_head = (char*) calloc(6, sizeof(char));
-	char* out_file;
+	char* filepath;
 	do {
 		digest = extract_string_from_json(&manifests_response, "blobSum");
 		if (digest) {
 			layer_url = compose_path("https://registry-1.docker.io/v2/library/", img, "/blobs/", digest);
 			sprintf(digest_head, "%.6s", digest+strlen("sha256:"));
-			printf("digest head: %s\n", digest_head);
-			out_file = make_curl_req(layer_url, write_to_file, headers, digest_head);
+			printf("digest_head: %s\n", digest_head);
+			filepath = make_curl_req(layer_url, write_to_file, headers, digest_head);
 		}
 	} while (digest != NULL);
+	char command[50];
+
+	strcat(command, "bunzip2 -f ");
+	strcat(command, filepath);
+	system(command);
 	curl_slist_free_all(headers);
 	free(digest_head);
 	free(manifests_url);
@@ -320,7 +343,7 @@ int main(int argc, char *argv[]) {
 	// Disable output buffering
 	setbuf(stdout, NULL);
 
-	chroot_into_tmp("tmp-cage/");
+	chroot_into_tmp("tmp-cage");
 
 	char* docker_args[2] = {argv[1], argv[2]};
 
@@ -328,12 +351,12 @@ int main(int argc, char *argv[]) {
 		pull_docker_image(argv[2]);
 	}
 
-	// We're in parent
-	Args* args = args_make(argv + 3);
+	// // We're in parent
+	// Args* args = args_make(argv + 3);
 
-	args->child_pid = clone_child(setup_run_child, (void*) args);
-	int exit_code = setup_run_parent(args);
+	// args->child_pid = clone_child(setup_run_child, (void*) args);
+	// int exit_code = setup_run_parent(args);
 
-	free(args);
-	return exit_code;
+	// free(args);
+	// return exit_code;
 }
