@@ -150,13 +150,17 @@ Args* args_make(char* cmd_args[]) {
 // 	return child_pid;
 // }
 
-size_t write_callback(void* data, size_t size, size_t nmemb, void* array_mem) {
+size_t write_to_buffer(void* data, size_t size, size_t nmemb, void* array_mem) {
 	// libcurl always calls the callback with size == 1;
 	size_t true_sz = size*nmemb;
 	BufferArray* buf_arr = (BufferArray*) array_mem;
 	memcpy(buf_arr->buffer + buf_arr->size, data, true_sz);
 	buf_arr->size += true_sz;
 	return true_sz;
+}
+
+size_t write_to_file(void* data, size_t size, size_t nmemb, void* file_mem) {
+	return fwrite(data, size, nmemb, (FILE*) file_mem);
 }
 
 char* extract_string_from_json(char** buffer_ptr, char* field) {
@@ -198,8 +202,12 @@ char* extract_string_from_json(char** buffer_ptr, char* field) {
 
 }
 
-char* make_curl_req(char* url, size_t write_cb (void*, size_t, size_t, void*), struct curl_slist* list) {
+char* make_curl_req(char* url, size_t write_cb (void*, size_t, size_t, void*), struct curl_slist* list, char* filename) {
 	CURL* curl = curl_easy_init();
+	FILE* out_file;
+	if (filename) {
+		out_file = fopen(filename, "ab");
+	}
 	char* body_buffer = (char*) calloc(CURL_MAX_WRITE_SIZE, sizeof(char));
 	BufferArray buf_arr;
 	buf_arr.buffer = body_buffer;
@@ -210,18 +218,33 @@ char* make_curl_req(char* url, size_t write_cb (void*, size_t, size_t, void*), s
 			curl_easy_setopt(curl, CURLOPT_HTTPHEADER, list);
 		}
 		curl_easy_setopt(curl, CURLOPT_URL, url);
-		curl_easy_setopt(curl, CURLOPT_VERBOSE, 1);
+		curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
 		curl_easy_setopt(curl, CURLOPT_PROTOCOLS, CURLPROTO_HTTPS);
 		curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-		curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_cb);
-		curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void*) &buf_arr);
-		res = curl_easy_perform(curl);
-		if (res != CURLE_OK) {
-			fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
+		if (!filename) {
+			curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_cb);
+			curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void*) &buf_arr);
+			
+			res = curl_easy_perform(curl);
+			if (res != CURLE_OK) {
+				fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
+			}
+			curl_easy_cleanup(curl);
+			return body_buffer;
 		}
-		curl_easy_cleanup(curl);
+		else {
+			curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_to_file);
+			curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void*) out_file);
+		
+			res = curl_easy_perform(curl);
+			if (res != CURLE_OK) {
+				fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
+			}
+			curl_easy_cleanup(curl);
+			fclose(out_file);
+			return filename;
+		}
 	}
-	return body_buffer;
 }
 
 char* compose_path(char* base, char* img, char* sep, char* ext) {
@@ -250,7 +273,7 @@ void pull_docker_image(char* img) {
 						img,
 						":",
 						"pull");
-	char* auth_response = make_curl_req(auth_url, write_callback, NULL);
+	char* auth_response = make_curl_req(auth_url, write_to_buffer, NULL, NULL);
 
 	char* token = extract_string_from_json(&auth_response,"token");
 
@@ -268,17 +291,22 @@ void pull_docker_image(char* img) {
 	strcat(auth_header, token);
 	headers = curl_slist_append(headers, auth_header);
 
-	char* manifests_response = make_curl_req(manifests_url, write_callback, headers);
-	char* manifest;
+	char* manifests_response = make_curl_req(manifests_url, write_to_buffer, headers, NULL);
+	char* digest;
 	char* layer_url;
+	char* digest_head = (char*) calloc(6, sizeof(char));
+	char* out_file;
 	do {
-		manifest = extract_string_from_json(&manifests_response, "blobSum");
-		if (manifest) {
-			layer_url = compose_path("https://registry-1.docker.io/v2/library/", img, "/blobs/", manifest);
-			printf("url: %s\n", layer_url);
+		digest = extract_string_from_json(&manifests_response, "blobSum");
+		if (digest) {
+			layer_url = compose_path("https://registry-1.docker.io/v2/library/", img, "/blobs/", digest);
+			sprintf(digest_head, "%.6s", digest+strlen("sha256:"));
+			printf("digest head: %s\n", digest_head);
+			out_file = make_curl_req(layer_url, write_to_file, headers, digest_head);
 		}
-	} while (manifest != NULL);
+	} while (digest != NULL);
 	curl_slist_free_all(headers);
+	free(digest_head);
 	free(manifests_url);
 	free(auth_url);
 	free(auth_header);
@@ -292,7 +320,7 @@ int main(int argc, char *argv[]) {
 	// Disable output buffering
 	setbuf(stdout, NULL);
 
-	// chroot_into_tmp("tmp-cage/");
+	chroot_into_tmp("tmp-cage/");
 
 	char* docker_args[2] = {argv[1], argv[2]};
 
@@ -300,12 +328,12 @@ int main(int argc, char *argv[]) {
 		pull_docker_image(argv[2]);
 	}
 
-	// // We're in parent
-	// Args* args = args_make(argv + 3);
+	// We're in parent
+	Args* args = args_make(argv + 3);
 
-	// args->child_pid = clone_child(setup_run_child, (void*) args);
-	// int exit_code = setup_run_parent(args);
+	args->child_pid = clone_child(setup_run_child, (void*) args);
+	int exit_code = setup_run_parent(args);
 
-	// free(args);
-	// return exit_code;
+	free(args);
+	return exit_code;
 }
