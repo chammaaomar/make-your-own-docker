@@ -12,6 +12,7 @@
 #include <sys/mman.h>
 #include <sys/types.h>
 #include <curl/curl.h>
+#include <stdbool.h>
 
 #define STACK_SIZE (1024 * 1024)
 #define BUFFER_SIZE 1024
@@ -165,26 +166,20 @@ char* extract_string_from_json(char** buffer_ptr, char* field) {
 	cursor that can be iteratively used to search a JSON response for more
 	fields until exhausted.
 	*/
-	// e.g. "token":" thus strlen(token) + 4 chars + null terminator
+	// e.g. "token": thus strlen(token) + 3 chars + null terminator
 	char* buffer = *buffer_ptr;
-	char* start_str = (char*) calloc(strlen(field) + 5, sizeof(char));
+	char* start_str = (char*) calloc(strlen(field) + 4, sizeof(char));
 	start_str[0] = '"';
 	strcat(start_str, field);
-	strcat(start_str, "\":\"");
+	strcat(start_str, "\":");
 	char* target_start = strstr(buffer, start_str);
 	if (!target_start) {
-		fprintf(stderr, "Could not find field: %s in JSON response", field);
+		fprintf(stderr, "Could not find field: %s in JSON response\n", field);
 		return NULL;
 	}
-	// the JSON response has "field":"$FIELD", we skip the keywords and formatting
-	// so we move forward by len("field":")
 	target_start += strlen(start_str);
+	target_start = strchr(target_start, '"') + 1;
 	char* target_end = strchr(target_start, '"');
-	if (!target_end) {
-		fprintf(stderr, "Error: end of string corresponding to %s field not found; "
-						"make sure JSON value at target field is actually a string", field);
-		return NULL;
-	}
 	// the access token ends with $TOKEN" so the pointer is pointing to -> " at the end
 	// so we have to displace it one step backward.
 	target_end += -1;
@@ -198,7 +193,7 @@ char* extract_string_from_json(char** buffer_ptr, char* field) {
 		return target;
 	}
 	
-	fprintf(stderr, "Error: target string (JSON response) had length: %i", (int) target_len);
+	fprintf(stderr, "Error: target string (JSON response) had length: %i\n", (int) target_len);
 	return NULL;
 
 }
@@ -217,6 +212,7 @@ char* make_curl_req(char* url, size_t write_cb (void*, size_t, size_t, void*), s
 		curl_easy_setopt(curl, CURLOPT_URL, url);
 		curl_easy_setopt(curl, CURLOPT_VERBOSE, 1);
 		curl_easy_setopt(curl, CURLOPT_PROTOCOLS, CURLPROTO_HTTPS);
+		curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
 		curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_cb);
 		curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void*) &buf_arr);
 		res = curl_easy_perform(curl);
@@ -228,7 +224,7 @@ char* make_curl_req(char* url, size_t write_cb (void*, size_t, size_t, void*), s
 	return body_buffer;
 }
 
-char* compose_string(char* base, char* img, char* ext) {
+char* compose_path(char* base, char* img, char* sep, char* ext) {
 	/*
 	Builds the url for a request to the docker API v2. If making a request to the auth server,
 	the ext should be an action preceded by ':', like ':pull' or ':push'. If making a request
@@ -239,19 +235,21 @@ char* compose_string(char* base, char* img, char* ext) {
 		@img: assumed to be Official Docker image, so it falls under the library repo
 		@ext: e.g. ":pull" or "/tags/list". Must be preceded by ':' or '/'
 	*/
-	char* url = (char*) calloc(strlen(base) + strlen(img) + strlen(ext) + 1, sizeof(char));
+	char* url = (char*) calloc(strlen(base) + strlen(img) + strlen(sep) + strlen(ext) + 1, sizeof(char));
 	strcat(url, base);
 	strcat(url, img);
+	strcat(url, sep);
 	strcat(url, ext);
 
 	return url;
 }
 
 void pull_docker_image(char* img) {
-	char* auth_url = compose_string(
+	char* auth_url = compose_path(
 						"https://auth.docker.io/token?service=registry.docker.io&scope=repository:library/",
 						img,
-						":pull");
+						":",
+						"pull");
 	char* auth_response = make_curl_req(auth_url, write_callback, NULL);
 
 	char* token = extract_string_from_json(&auth_response,"token");
@@ -262,7 +260,7 @@ void pull_docker_image(char* img) {
 		free(token);
 		exit(1);
 	}
-	char* manifests_url = compose_string("https://registry-1.docker.io/v2/library/", img, "/manifests/latest");
+	char* manifests_url = compose_path("https://registry-1.docker.io/v2/library/", img, "/", "manifests/latest");
 	struct curl_slist* headers = NULL;
 	// Authorization: Bearer $TOKEN
 	char* auth_header = (char*) calloc(strlen(token) + 50, sizeof(char));
@@ -271,13 +269,16 @@ void pull_docker_image(char* img) {
 	headers = curl_slist_append(headers, auth_header);
 
 	char* manifests_response = make_curl_req(manifests_url, write_callback, headers);
-	
+	char* manifest;
+	char* layer_url;
+	do {
+		manifest = extract_string_from_json(&manifests_response, "blobSum");
+		if (manifest) {
+			layer_url = compose_path("https://registry-1.docker.io/v2/library/", img, "/blobs/", manifest);
+			printf("url: %s\n", layer_url);
+		}
+	} while (manifest != NULL);
 	curl_slist_free_all(headers);
-	puts("Auth response:");
-	puts(auth_response);
-	
-	puts("Manifests reponse:");
-	puts(manifests_response);
 	free(manifests_url);
 	free(auth_url);
 	free(auth_header);
