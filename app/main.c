@@ -130,24 +130,24 @@ Args* args_make(char* cmd_args[]) {
 	return args;
 }
 
-pid_t clone_child(int fn (void*), void* args) {
-	char* stack = mmap(NULL, STACK_SIZE,
-					   PROT_READ | PROT_WRITE,
-					   MAP_PRIVATE | MAP_ANONYMOUS | MAP_STACK,
-					   -1, 0);
+// pid_t clone_child(int fn (void*), void* args) {
+// 	char* stack = mmap(NULL, STACK_SIZE,
+// 					   PROT_READ | PROT_WRITE,
+// 					   MAP_PRIVATE | MAP_ANONYMOUS | MAP_STACK,
+// 					   -1, 0);
 
-	// stack grows downward
-	char* stack_top = stack + STACK_SIZE;
+// 	// stack grows downward
+// 	char* stack_top = stack + STACK_SIZE;
 
-	int child_pid = clone(setup_run_child, stack_top, CLONE_NEWPID, (void*) args);
+// 	int child_pid = clone(setup_run_child, stack_top, CLONE_NEWPID, (void*) args);
 
-	if (child_pid == -1) {
-		free(args);
-		error("Error cloning child process");
-	}
+// 	if (child_pid == -1) {
+// 		free(args);
+// 		error("Error cloning child process");
+// 	}
 
-	return child_pid;
-}
+// 	return child_pid;
+// }
 
 size_t write_callback(void* data, size_t size, size_t nmemb, void* array_mem) {
 	// libcurl always calls the callback with size == 1;
@@ -158,32 +158,52 @@ size_t write_callback(void* data, size_t size, size_t nmemb, void* array_mem) {
 	return true_sz;
 }
 
-char* extract_token(char* buffer, char* token_start_kw, char* token_end_kw) {
-	// returns NULL to signal failure
-	char* token_start = strstr(buffer, token_start_kw);
-	char* token_end = strstr(buffer, token_end_kw) ;
-	if (!token_start || !token_end) {
-		fprintf(stderr, "Error token invalid");
+char* extract_string_from_json(char** buffer_ptr, char* field) {
+	/*
+	Side Effect: Moves the buffer pointed to by @buffer_ptr to the end of
+	the target. Thus the pointer referenced by @buffer_ptr acts like a
+	cursor that can be iteratively used to search a JSON response for more
+	fields until exhausted.
+	*/
+	// e.g. "token":" thus strlen(token) + 4 chars + null terminator
+	char* buffer = *buffer_ptr;
+	char* start_str = (char*) calloc(strlen(field) + 5, sizeof(char));
+	start_str[0] = '"';
+	strcat(start_str, field);
+	strcat(start_str, "\":\"");
+	char* target_start = strstr(buffer, start_str);
+	if (!target_start) {
+		fprintf(stderr, "Could not find field: %s in JSON response", field);
 		return NULL;
 	}
-	// the JSON response has "token": "$TOKEN", we skip the keywords and formatting
-	token_start += strlen(token_start_kw)+1;
-	// the access token ends with $TOKEN","access_token", so we move three steps
-	// back to get the end
-	token_end += -3;
-	size_t token_len = (size_t) (token_end - token_start);
-	if (token_len > 0) {
-		char* token = (char*) calloc(token_len + 2, sizeof(char));
-		memcpy(token, token_start, token_len + 1);
-		return token;
-	} else {
-		fprintf(stderr, "Error token invalid");
+	// the JSON response has "field":"$FIELD", we skip the keywords and formatting
+	// so we move forward by len("field":")
+	target_start += strlen(start_str);
+	char* target_end = strchr(target_start, '"');
+	if (!target_end) {
+		fprintf(stderr, "Error: end of string corresponding to %s field not found; "
+						"make sure JSON value at target field is actually a string", field);
 		return NULL;
 	}
+	// the access token ends with $TOKEN" so the pointer is pointing to -> " at the end
+	// so we have to displace it one step backward.
+	target_end += -1;
+	size_t target_len = (size_t) (target_end - target_start);
+	if (target_len > 0) {
+		char* target = (char*) calloc(target_len + 2, sizeof(char));
+		memcpy(target, target_start, target_len + 1);
+		// displace the buffer to the end of the target, so it can be used
+		// to search iteratively for searching next instance of the field
+		*buffer_ptr = target_end + 1;
+		return target;
+	}
+	
+	fprintf(stderr, "Error: target string (JSON response) had length: %i", (int) target_len);
+	return NULL;
 
 }
 
-char* make_curl_req(char* url, size_t write_cb (void*, size_t, size_t, void*)) {
+char* make_curl_req(char* url, size_t write_cb (void*, size_t, size_t, void*), struct curl_slist* list) {
 	CURL* curl = curl_easy_init();
 	char* body_buffer = (char*) calloc(CURL_MAX_WRITE_SIZE, sizeof(char));
 	BufferArray buf_arr;
@@ -191,6 +211,9 @@ char* make_curl_req(char* url, size_t write_cb (void*, size_t, size_t, void*)) {
 	buf_arr.size = 0;
 	if (curl) {
 		CURLcode res;
+		if (list) {
+			curl_easy_setopt(curl, CURLOPT_HTTPHEADER, list);
+		}
 		curl_easy_setopt(curl, CURLOPT_URL, url);
 		curl_easy_setopt(curl, CURLOPT_VERBOSE, 1);
 		curl_easy_setopt(curl, CURLOPT_PROTOCOLS, CURLPROTO_HTTPS);
@@ -205,18 +228,59 @@ char* make_curl_req(char* url, size_t write_cb (void*, size_t, size_t, void*)) {
 	return body_buffer;
 }
 
-void pull_docker_image(char* img) {
-	char* auth_url = "https://auth.docker.io/token?service=registry.docker.io&scope=repository:library/ubuntu:pull";
-	char* auth_response = make_curl_req(auth_url, write_callback);
+char* compose_string(char* base, char* img, char* ext) {
+	/*
+	Builds the url for a request to the docker API v2. If making a request to the auth server,
+	the ext should be an action preceded by ':', like ':pull' or ':push'. If making a request
+	to the registry, the ext should be a resource like /manifests/latest.
+	
+	params:
+		@base: base url, including protocol.
+		@img: assumed to be Official Docker image, so it falls under the library repo
+		@ext: e.g. ":pull" or "/tags/list". Must be preceded by ':' or '/'
+	*/
+	char* url = (char*) calloc(strlen(base) + strlen(img) + strlen(ext) + 1, sizeof(char));
+	strcat(url, base);
+	strcat(url, img);
+	strcat(url, ext);
 
-	char* token = extract_token(auth_response,"\"token\":", "\"access_token\":");
+	return url;
+}
+
+void pull_docker_image(char* img) {
+	char* auth_url = compose_string(
+						"https://auth.docker.io/token?service=registry.docker.io&scope=repository:library/",
+						img,
+						":pull");
+	char* auth_response = make_curl_req(auth_url, write_callback, NULL);
+
+	char* token = extract_string_from_json(&auth_response,"token");
 
 	if (!token) {
+		// failed to get auth token; extract_token already writes to stderr
+		// so just exit
+		free(token);
 		exit(1);
 	}
+	char* manifests_url = compose_string("https://registry-1.docker.io/v2/library/", img, "/manifests/latest");
+	struct curl_slist* headers = NULL;
+	// Authorization: Bearer $TOKEN
+	char* auth_header = (char*) calloc(strlen(token) + 50, sizeof(char));
+	strcpy(auth_header, "Authorization: Bearer ");
+	strcat(auth_header, token);
+	headers = curl_slist_append(headers, auth_header);
 
-	puts(token);
-
+	char* manifests_response = make_curl_req(manifests_url, write_callback, headers);
+	
+	curl_slist_free_all(headers);
+	puts("Auth response:");
+	puts(auth_response);
+	
+	puts("Manifests reponse:");
+	puts(manifests_response);
+	free(manifests_url);
+	free(auth_url);
+	free(auth_header);
 	free(token);
 	
 
@@ -227,7 +291,7 @@ int main(int argc, char *argv[]) {
 	// Disable output buffering
 	setbuf(stdout, NULL);
 
-	chroot_into_tmp("tmp-cage/");
+	// chroot_into_tmp("tmp-cage/");
 
 	char* docker_args[2] = {argv[1], argv[2]};
 
@@ -235,14 +299,12 @@ int main(int argc, char *argv[]) {
 		pull_docker_image(argv[2]);
 	}
 
-	pull_docker_image("");
+	// // We're in parent
+	// Args* args = args_make(argv + 3);
 
-	// We're in parent
-	Args* args = args_make(argv + 3);
+	// args->child_pid = clone_child(setup_run_child, (void*) args);
+	// int exit_code = setup_run_parent(args);
 
-	args->child_pid = clone_child(setup_run_child, (void*) args);
-	int exit_code = setup_run_parent(args);
-
-	free(args);
-	return exit_code;
+	// free(args);
+	// return exit_code;
 }
