@@ -62,7 +62,7 @@ void pull_docker_image(char* img) {
 
 	strcat(command, "tar xf ");
 	strcat(command, filepath);
-	strcat(command, " -C tmp-chroot-cage/");
+	strcat(command, " -C chroot-cage/");
 	system(command);
 
 

@@ -18,7 +18,6 @@ void chroot_into_dir(char * dir) {
 int main(int argc, char *argv[]) {
 	// Disable output buffering
 	setbuf(stdout, NULL);
-	char chroot_dir[] = "chroot-cage";
 
 	if (mkdir(chroot_dir, S_IRWXO) == -1) {
 		if (errno != EEXIST) {
@@ -31,8 +30,9 @@ int main(int argc, char *argv[]) {
 
 	if (!strcmp(argv[1], "run")) {
 		pull_docker_image(argv[2]);
+	}
 	
-	chroot_into_dir(chroot_dir);
+	chroot_into_dir("chroot-cage");
 
 	// We're in parent
 	if (argv[3]) {
