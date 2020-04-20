@@ -50,6 +50,8 @@ int setup_run_child(void* args) {
 	dup2(fd_outpipe, fileno(stdout));
 	dup2(fd_errpipe, fileno(stderr));
 
+	system("ls");
+
 	if (execv(command, exec_args) == -1) {
 		free(args);
 		error("Error executing command");
