@@ -44,13 +44,13 @@ int setup_run_child(void* args) {
 	int fd_outpipe = args_struct->out_pipe[1];
 	int fd_errpipe = args_struct->err_pipe[1];
 	// only executing docker-explorer command for now
-	char* command = exec_args[0] = "/bin/docker-explorer";
+	char* command = exec_args[0];
 	
 	// open write pipes to talk to parent
 	dup2(fd_outpipe, fileno(stdout));
 	dup2(fd_errpipe, fileno(stderr));
 
-	if (execv(command, exec_args) == -1) {
+	if (execvp(command, exec_args) == -1) {
 		free(args);
 		error("Error executing command");
 	}
