@@ -17,6 +17,8 @@
 #define STACK_SIZE (1024 * 1024)
 #define BUFFER_SIZE 1024
 
+#define TMP_DIR "./tmp-chroot-cage"
+
 typedef struct Args {
 	int* err_pipe;
 	int* out_pipe;
@@ -42,7 +44,7 @@ int setup_run_child(void* args) {
 	int fd_outpipe = args_struct->out_pipe[1];
 	int fd_errpipe = args_struct->err_pipe[1];
 	// only executing docker-explorer command for now
-	char* command = exec_args[0] = "/docker-explorer";
+	char* command = exec_args[0] = "/bin/docker-explorer";
 	
 	// open write pipes to talk to parent
 	dup2(fd_outpipe, fileno(stdout));
@@ -70,7 +72,7 @@ int setup_run_parent(void* args) {
 	fcntl(fd_outpipe, F_SETFL, O_NONBLOCK);
 	fcntl(fd_errpipe, F_SETFL, O_NONBLOCK);
 
-	// waitpid(child_pid, &status, __WALL);
+	waitpid(child_pid, &status, __WALL);
 
 	size_t out_sz = read(fd_outpipe, child_out, BUFFER_SIZE - 1);
 	size_t err_sz = read(fd_errpipe, child_err, BUFFER_SIZE - 1);
@@ -81,49 +83,35 @@ int setup_run_parent(void* args) {
 	return WEXITSTATUS(status);
 }
 
-void chroot_into_tmp(const char * tmp_dir) {
+void chroot_into_tmp() {
 	
-	if (mkdir(tmp_dir, S_IRWXO) == -1) {
+	if (mkdir(TMP_DIR, S_IRWXO) == -1) {
 		if (errno != EEXIST) {
 			// it's ok if file already exists
 			error("Error creating a tmp dir");
 		}
 	}
 
-	pid_t cp_pid = fork();
-
-	if (cp_pid == -1) {
-		error("Error forking to copy executable");
+	if (chdir(TMP_DIR) == -1) {
+		error("Error changing into new root dir");
 	}
 
-	if (!cp_pid) {
-		// copy process; this will exit upon success or failure
-		if (execlp("cp", "cp", DOCKER_IMG, tmp_dir, NULL) == -1) {
-			error("Error copying docker-explorer bin into chroot cage");
-		}
-	}
+	system("mkdir -p etc/ssl/certs");
+	system("mkdir -p bin");
+	system("cp /etc/ssl/certs/* etc/ssl/certs");
 
-	int cp_status;
-	waitpid(cp_pid, &cp_status, 0);
+	system("cp /usr/local/bin/docker-explorer bin/");
 
-	pid_t mount_pid = fork();
+	system("cp /usr/bin/tar bin/");
 
-	system("mkdir -p tmp-cage/etc/ssl/certs");
-	system("cp /etc/ssl/certs/* tmp-cage/etc/ssl/certs/");
+	system("cp /etc/resolv.conf etc/");
 
-	if (mount_pid == -1) {
-		error("Error forking to chroot");
-	}
-	if (!mount_pid) {
-		if (execlp("cp", "cp", "/etc/resolv.conf", "tmp-cage/etc/", NULL) == -1) {
-			error("Error mounting hostname resolution dir");
-		}
-	}
+	system("mkdir -p lib");
+	system("cp /bin/sh bin/");
+	system("cp /lib/ld-musl-x86_64.so.1 ./lib/");
+	system("cp /bin/gzip bin/");
 
-	int mount_status;
-	waitpid(mount_pid, &mount_status, 0);
-
-	if (chroot(tmp_dir) == -1) {
+	if (chroot(".") == -1) {
 		error("Error chrooting into tmp dir");
 	}
 
@@ -149,24 +137,24 @@ Args* args_make(char* cmd_args[]) {
 	return args;
 }
 
-// pid_t clone_child(int fn (void*), void* args) {
-// 	char* stack = mmap(NULL, STACK_SIZE,
-// 					   PROT_READ | PROT_WRITE,
-// 					   MAP_PRIVATE | MAP_ANONYMOUS | MAP_STACK,
-// 					   -1, 0);
+pid_t clone_child(int fn (void*), void* args) {
+	char* stack = mmap(NULL, STACK_SIZE,
+					   PROT_READ | PROT_WRITE,
+					   MAP_PRIVATE | MAP_ANONYMOUS | MAP_STACK,
+					   -1, 0);
 
-// 	// stack grows downward
-// 	char* stack_top = stack + STACK_SIZE;
+	// stack grows downward
+	char* stack_top = stack + STACK_SIZE;
 
-// 	int child_pid = clone(setup_run_child, stack_top, CLONE_NEWPID, (void*) args);
+	int child_pid = clone(setup_run_child, stack_top, CLONE_NEWPID, (void*) args);
 
-// 	if (child_pid == -1) {
-// 		free(args);
-// 		error("Error cloning child process");
-// 	}
+	if (child_pid == -1) {
+		free(args);
+		error("Error cloning child process");
+	}
 
-// 	return child_pid;
-// }
+	return child_pid;
+}
 
 size_t write_to_buffer(void* data, size_t size, size_t nmemb, void* array_mem) {
 	// libcurl always calls the callback with size == 1;
@@ -312,22 +300,25 @@ void pull_docker_image(char* img) {
 	char* manifests_response = make_curl_req(manifests_url, write_to_buffer, headers, NULL);
 	char* digest;
 	char* layer_url;
-	char* digest_head = (char*) calloc(6, sizeof(char));
+	char* digest_head = (char*) calloc(7, sizeof(char));
 	char* filepath;
 	do {
 		digest = extract_string_from_json(&manifests_response, "blobSum");
 		if (digest) {
 			layer_url = compose_path("https://registry-1.docker.io/v2/library/", img, "/blobs/", digest);
 			sprintf(digest_head, "%.6s", digest+strlen("sha256:"));
-			printf("digest_head: %s\n", digest_head);
 			filepath = make_curl_req(layer_url, write_to_file, headers, digest_head);
+			printf("filepath: %s\n", filepath);
 		}
 	} while (digest != NULL);
-	char command[50];
 
-	strcat(command, "bunzip2 -f ");
+	char command[50] = {0};
+
+	strcat(command, "tar xf ");
 	strcat(command, filepath);
 	system(command);
+
+
 	curl_slist_free_all(headers);
 	free(digest_head);
 	free(manifests_url);
@@ -343,7 +334,7 @@ int main(int argc, char *argv[]) {
 	// Disable output buffering
 	setbuf(stdout, NULL);
 
-	chroot_into_tmp("tmp-cage");
+	chroot_into_tmp();
 
 	char* docker_args[2] = {argv[1], argv[2]};
 
@@ -351,12 +342,12 @@ int main(int argc, char *argv[]) {
 		pull_docker_image(argv[2]);
 	}
 
-	// // We're in parent
-	// Args* args = args_make(argv + 3);
+	// We're in parent
+	Args* args = args_make(argv + 3);
 
-	// args->child_pid = clone_child(setup_run_child, (void*) args);
-	// int exit_code = setup_run_parent(args);
+	args->child_pid = clone_child(setup_run_child, (void*) args);
+	int exit_code = setup_run_parent(args);
 
-	// free(args);
-	// return exit_code;
+	free(args);
+	return exit_code;
 }
