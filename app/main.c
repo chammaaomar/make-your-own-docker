@@ -84,29 +84,12 @@ int setup_run_parent(void* args) {
 }
 
 void chroot_into_tmp() {
-	
-	if (mkdir(TMP_DIR, S_IRWXO) == -1) {
-		if (errno != EEXIST) {
-			// it's ok if file already exists
-			error("Error creating a tmp dir");
-		}
-	}
 
 	if (chdir(TMP_DIR) == -1) {
 		error("Error changing into new root dir");
 	}
 
-	system("mkdir -p etc/ssl/certs");
-	system("mkdir -p bin");
-	system("cp /etc/ssl/certs/* etc/ssl/certs");
-
 	system("cp /usr/local/bin/docker-explorer bin/");
-
-	system("cp /etc/resolv.conf etc/");
-
-	system("mkdir -p lib");
-	system("cp /bin/sh /bin/tar /bin/gzip bin/");
-	system("cp /lib/ld-musl-x86_64.so.1 ./lib/");
 
 	if (chroot(".") == -1) {
 		error("Error chrooting into tmp dir");
@@ -312,8 +295,8 @@ void pull_docker_image(char* img) {
 
 	strcat(command, "tar xf ");
 	strcat(command, filepath);
+	strcat(command, " -C tmp-chroot-cage/");
 	system(command);
-	system("rm * 2> /dev/null");
 
 
 	curl_slist_free_all(headers);
@@ -331,13 +314,19 @@ int main(int argc, char *argv[]) {
 	// Disable output buffering
 	setbuf(stdout, NULL);
 
-	chroot_into_tmp();
+	if (mkdir(TMP_DIR, S_IRWXO) == -1) {
+		if (errno != EEXIST) {
+			// it's ok if file already exists
+			error("Error creating a tmp dir");
+		}
+	}
 
 	char* docker_args[2] = {argv[1], argv[2]};
 
 	if (!strcmp(argv[1], "run")) {
 		pull_docker_image(argv[2]);
 	}
+	chroot_into_tmp();
 
 	// We're in parent
 	if (argv[3]) {
