@@ -1,5 +1,19 @@
 #include "main.h"
 
+void chroot_into_dir(char * dir) {
+
+	if (chdir(dir) == -1) {
+		error("Error changing into new root dir");
+	}
+
+	system("cp /usr/local/bin/docker-explorer bin/");
+
+	if (chroot(".") == -1) {
+		error("Error chrooting into tmp dir");
+	}
+
+}
+
 // Usage: your_docker.sh run <image> <command> <arg1> <arg2> ...
 int main(int argc, char *argv[]) {
 	// Disable output buffering
@@ -17,8 +31,8 @@ int main(int argc, char *argv[]) {
 
 	if (!strcmp(argv[1], "run")) {
 		pull_docker_image(argv[2]);
-	}
-	chroot_into_tmp(chroot_dir);
+	
+	chroot_into_dir(chroot_dir);
 
 	// We're in parent
 	if (argv[3]) {

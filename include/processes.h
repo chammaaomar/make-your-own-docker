@@ -1,10 +1,12 @@
-#include "base.h"
 #include <sys/types.h>
 #define _GNU_SOURCE
 #include <sched.h>
 #include <sys/mman.h>
 #include <fcntl.h>
 #include <sys/wait.h>
+
+#include "base.h"
+#include "error.h"
 
 #define BUFFER_SIZE 1024
 #define STACK_SIZE (1024 * 1024)
