@@ -102,14 +102,11 @@ void chroot_into_tmp() {
 
 	system("cp /usr/local/bin/docker-explorer bin/");
 
-	system("cp /usr/bin/tar bin/");
-
 	system("cp /etc/resolv.conf etc/");
 
 	system("mkdir -p lib");
-	system("cp /bin/sh bin/");
+	system("cp /bin/sh /bin/tar /bin/gzip bin/");
 	system("cp /lib/ld-musl-x86_64.so.1 ./lib/");
-	system("cp /bin/gzip bin/");
 
 	if (chroot(".") == -1) {
 		error("Error chrooting into tmp dir");
