@@ -305,7 +305,6 @@ void pull_docker_image(char* img) {
 			layer_url = compose_path("https://registry-1.docker.io/v2/library/", img, "/blobs/", digest);
 			sprintf(digest_head, "%.6s", digest+strlen("sha256:"));
 			filepath = make_curl_req(layer_url, write_to_file, headers, digest_head);
-			printf("filepath: %s\n", filepath);
 		}
 	} while (digest != NULL);
 
