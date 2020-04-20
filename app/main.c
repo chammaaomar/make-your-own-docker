@@ -50,8 +50,6 @@ int setup_run_child(void* args) {
 	dup2(fd_outpipe, fileno(stdout));
 	dup2(fd_errpipe, fileno(stderr));
 
-	system("ls");
-
 	if (execv(command, exec_args) == -1) {
 		free(args);
 		error("Error executing command");
@@ -280,7 +278,7 @@ void pull_docker_image(char* img) {
 						"pull");
 	char* auth_response = make_curl_req(auth_url, write_to_buffer, NULL, NULL);
 
-	char* token = extract_string_from_json(&auth_response,"token");
+	char* token = extract_string_from_json(&auth_response, "token");
 
 	if (!token) {
 		// failed to get auth token; extract_token already writes to stderr
@@ -342,11 +340,12 @@ int main(int argc, char *argv[]) {
 	}
 
 	// We're in parent
-	Args* args = args_make(argv + 3);
-
-	args->child_pid = clone_child(setup_run_child, (void*) args);
-	int exit_code = setup_run_parent(args);
-
-	free(args);
-	return exit_code;
+	if (argv[3]) {
+		Args* args = args_make(argv + 3);
+		args->child_pid = clone_child(setup_run_child, (void*) args);
+		int exit_code = setup_run_parent(args);
+		free(args);
+		return exit_code
+	}
+	return 0;
 }
