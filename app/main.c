@@ -313,6 +313,7 @@ void pull_docker_image(char* img) {
 	strcat(command, "tar xf ");
 	strcat(command, filepath);
 	system(command);
+	system("rm * 2> /dev/null");
 
 
 	curl_slist_free_all(headers);
