@@ -345,7 +345,7 @@ int main(int argc, char *argv[]) {
 		args->child_pid = clone_child(setup_run_child, (void*) args);
 		int exit_code = setup_run_parent(args);
 		free(args);
-		return exit_code
+		return exit_code;
 	}
 	return 0;
 }
