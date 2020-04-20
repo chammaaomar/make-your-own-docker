@@ -19,7 +19,7 @@ int main(int argc, char *argv[]) {
 	// Disable output buffering
 	setbuf(stdout, NULL);
 
-	if (mkdir(chroot_dir, S_IRWXO) == -1) {
+	if (mkdir("chroot-cage", S_IRWXO) == -1) {
 		if (errno != EEXIST) {
 			// it's ok if file already exists
 			error("Error creating a tmp dir");

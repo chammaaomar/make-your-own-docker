@@ -11,4 +11,4 @@ COPY . /app
 
 WORKDIR /app
 
-# ENTRYPOINT ["/app/your_docker.sh"] 
+ENTRYPOINT ["/app/your_docker.sh"] 
