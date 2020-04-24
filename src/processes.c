@@ -22,9 +22,9 @@ Args* args_make(char* cmd_args[]) {
 
 pid_t clone_child(int fn (void*), void* args) {
 	char* stack = mmap(NULL, STACK_SIZE,
-					   PROT_READ | PROT_WRITE,
-					   MAP_PRIVATE | MAP_ANONYMOUS | MAP_STACK,
-					   -1, 0);
+			   PROT_READ | PROT_WRITE,
+			   MAP_PRIVATE | MAP_ANONYMOUS | MAP_STACK,
+			   -1, 0);
 
 	// stack grows downward
 	char* stack_top = stack + STACK_SIZE;
