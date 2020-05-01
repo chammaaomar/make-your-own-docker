@@ -1,6 +1,6 @@
 # CDocker
 
-Head over to [codecrafters.io](https://codecrafters.io) to signup for early access. Codecrafters is a pretty cool challenge based on gamifying the idea of make-your-own-X. Your entries to the challenge are verified for correctness by submitting to a pretty cool Contiuous Integration server. It's a pretty nice application of CI. New challenges are always being added! 
+Head over to [codecrafters.io](https://codecrafters.io) to signup for early access. Codecrafters is a pretty cool challenge based on gamifying the idea of make-your-own-X. Your entries to the challenge are verified for correctness by submitting to a pretty cool Contiuous Integration server. You get nicely colored visuals and instant feedback. Plus, there's a pretty cool Discord community you can join! It's a pretty nice application of CI. New challenges are always being added! 
 
 ## Usage
 To get started you will need a docker daemon. You can get Docker desktop for macOS or Windows from [here](https://www.docker.com/products/docker-desktop).
